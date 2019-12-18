@@ -948,4 +948,6 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
          (such as entering an empty infinite loop) by inserting llvm.sideeffect"),
     deduplicate_diagnostics: Option<bool> = (None, parse_opt_bool, [UNTRACKED],
         "deduplicate identical diagnostics"),
+    jobserver_token_requests: bool = (false, parse_bool, [UNTRACKED],
+        "Coordinate with caller through JSON messages on acquiring/releasing jobserver tokens"),
 }
