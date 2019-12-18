@@ -11,4 +11,6 @@ doctest = false
 
 [dependencies]
 jobserver_crate = { version = "0.1.13", package = "jobserver" }
+log = "0.4"
 lazy_static = "1"
+rustc_serialize = { path = "../libserialize", package = "serialize" }
