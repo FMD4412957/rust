@@ -29,7 +29,6 @@ use rustc_span::source_map;
 use rustc_span::{MultiSpan, Span};
 
 use rustc_data_structures::flock;
-use rustc_data_structures::jobserver::{self, Client};
 use rustc_data_structures::profiling::{SelfProfiler, SelfProfilerRef};
 use rustc_target::spec::{PanicStrategy, RelroLevel, Target, TargetTriple};
 
@@ -119,10 +118,6 @@ pub struct Session {
     pub print_fuel_crate: Option<String>,
     /// Always set to zero and incremented so that we can print fuel expended by a crate.
     pub print_fuel: AtomicU64,
-
-    /// Loaded up early on in the initialization of this `Session` to avoid
-    /// false positives about a job server in our environment.
-    pub jobserver: Client,
 
     /// Cap lint level specified by a driver specifically.
     pub driver_lint_caps: FxHashMap<lint::LintId, lint::Level>,
@@ -1065,7 +1060,6 @@ fn build_session_(
         optimization_fuel,
         print_fuel_crate,
         print_fuel,
-        jobserver: jobserver::client(),
         driver_lint_caps,
         trait_methods_not_found: Lock::new(Default::default()),
         confused_type_with_std_module: Lock::new(Default::default()),

@@ -9,7 +9,6 @@ use crate::{
 };
 
 use crate::traits::*;
-use jobserver::{Acquired, Client};
 use rustc::dep_graph::{WorkProduct, WorkProductFileKind, WorkProductId};
 use rustc::middle::cstore::EncodedMetadata;
 use rustc::session::config::{
@@ -29,6 +28,7 @@ use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_incremental::{
     copy_cgu_workproducts_to_incr_comp_cache_dir, in_incr_comp_dir, in_incr_comp_dir_sess,
 };
+use rustc_jobserver::Acquired;
 use rustc_session::cgu_reuse_tracker::CguReuseTracker;
 use rustc_span::hygiene::ExpnId;
 use rustc_span::source_map::SourceMap;
@@ -38,7 +38,6 @@ use syntax::attr;
 
 use std::any::Any;
 use std::fs;
-use std::io;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::str;
@@ -445,7 +444,6 @@ pub fn start_async_codegen<B: ExtraBackendMethods>(
         codegen_worker_send,
         coordinator_receive,
         total_cgus,
-        sess.jobserver.clone(),
         Arc::new(modules_config),
         Arc::new(metadata_config),
         Arc::new(allocator_config),
@@ -889,7 +887,7 @@ fn execute_lto_work_item<B: ExtraBackendMethods>(
 }
 
 pub enum Message<B: WriteBackendMethods> {
-    Token(io::Result<Acquired>),
+    Token(Acquired),
     NeedsFatLTO {
         result: FatLTOInput<B>,
         worker_id: usize,
@@ -937,7 +935,6 @@ fn start_executing_work<B: ExtraBackendMethods>(
     codegen_worker_send: Sender<Message<B>>,
     coordinator_receive: Receiver<Box<dyn Any + Send>>,
     total_cgus: usize,
-    jobserver: Client,
     modules_config: Arc<ModuleConfig>,
     metadata_config: Arc<ModuleConfig>,
     allocator_config: Arc<ModuleConfig>,
@@ -981,11 +978,13 @@ fn start_executing_work<B: ExtraBackendMethods>(
     // get tokens on `coordinator_receive` which will
     // get managed in the main loop below.
     let coordinator_send2 = coordinator_send.clone();
-    let helper = jobserver
-        .into_helper_thread(move |token| {
+    let helper = rustc_jobserver::helper_channel();
+    std::thread::spawn(move || {
+        loop {
+            let token = rustc_jobserver::acquire_from_request();
             drop(coordinator_send2.send(Box::new(Message::Token::<B>(token))));
-        })
-        .expect("failed to spawn helper thread");
+        }
+    });
 
     let mut each_linked_rlib_for_lto = Vec::new();
     drop(link::each_linked_rlib(crate_info, &mut |cnum, path| {
@@ -1374,25 +1373,15 @@ fn start_executing_work<B: ExtraBackendMethods>(
                 // this to spawn a new unit of work, or it may get dropped
                 // immediately if we have no more work to spawn.
                 Message::Token(token) => {
-                    match token {
-                        Ok(token) => {
-                            tokens.push(token);
+                    tokens.push(token);
 
-                            if main_thread_worker_state == MainThreadWorkerState::LLVMing {
-                                // If the main thread token is used for LLVM work
-                                // at the moment, we turn that thread into a regular
-                                // LLVM worker thread, so the main thread is free
-                                // to react to codegen demand.
-                                main_thread_worker_state = MainThreadWorkerState::Idle;
-                                running += 1;
-                            }
-                        }
-                        Err(e) => {
-                            let msg = &format!("failed to acquire jobserver token: {}", e);
-                            shared_emitter.fatal(msg);
-                            // Exit the coordinator thread
-                            panic!("{}", msg)
-                        }
+                    if main_thread_worker_state == MainThreadWorkerState::LLVMing {
+                        // If the main thread token is used for LLVM work
+                        // at the moment, we turn that thread into a regular
+                        // LLVM worker thread, so the main thread is free
+                        // to react to codegen demand.
+                        main_thread_worker_state = MainThreadWorkerState::Idle;
+                        running += 1;
                     }
                 }
 
